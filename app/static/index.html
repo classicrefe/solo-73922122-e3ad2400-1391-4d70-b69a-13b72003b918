@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>事件会话发布演示 · Event Session Publisher</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #181f2e; --panel2: #1f293d; --line: #2a3650;
+    --text: #e6ebf5; --muted: #8ea0bd; --accent: #5b8def; --accent2: #3d6fd8;
+    --green: #3fbf7f; --amber: #e0a93e; --red: #e06060; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.55 -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  header { padding:18px 28px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--muted); font-size:12.5px; }
+  main { padding:22px 28px; max-width:1280px; margin:0 auto; display:grid; gap:18px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:18px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px 18px; }
+  .card h2 { font-size:14px; margin:0 0 12px; color:var(--accent); letter-spacing:.3px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input, textarea, select { width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:8px 10px; font:13px var(--mono); outline:none; }
+  input:focus, textarea:focus { border-color:var(--accent); }
+  textarea { min-height:150px; resize:vertical; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:8px 14px; font-size:13px;
+    cursor:pointer; margin-top:10px; margin-right:6px; }
+  button:hover { background:var(--accent2); }
+  button.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--text); }
+  button.ghost:hover { border-color:var(--accent); }
+  button.small { padding:4px 9px; font-size:12px; margin-top:0; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:140px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.5px; }
+  td.mono, .mono { font-family:var(--mono); font-size:12px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:600; }
+  .badge.published { background:rgba(63,191,127,.15); color:var(--green); }
+  .badge.pending { background:rgba(224,169,62,.15); color:var(--amber); }
+  .badge.retract { background:rgba(224,96,96,.15); color:var(--red); }
+  .badge.add { background:rgba(63,191,127,.15); color:var(--green); }
+  .badge.publish { background:rgba(91,141,239,.18); color:var(--accent); }
+  .badge.late_import { background:rgba(224,169,62,.15); color:var(--amber); }
+  .muted { color:var(--muted); }
+  .log { background:#0b0f18; border:1px solid var(--line); border-radius:10px; padding:12px 14px; max-height:340px;
+    overflow:auto; font-family:var(--mono); font-size:12px; white-space:pre-wrap; }
+  .log .ok { color:var(--green); } .log .warn { color:var(--amber); } .log .err { color:var(--red); } .log .info{color:var(--accent);}
+  .rev-row { cursor:pointer; } .rev-row:hover { background:var(--panel2); }
+  .pill { font-family:var(--mono); font-size:11px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:6px; padding:1px 7px; color:var(--muted); }
+  .modal-bg { position:fixed; inset:0; background:rgba(5,8,14,.7); display:none; align-items:center; justify-content:center; z-index:10; }
+  .modal { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; width:min(760px,92vw); max-height:84vh; overflow:auto; }
+  .kv { display:grid; grid-template-columns:150px 1fr; gap:4px 12px; font-size:12.5px; margin-bottom:10px; }
+  .kv .k { color:var(--muted); }
+  .flash { padding:10px 14px; border-radius:8px; font-size:13px; display:none; }
+  .flash.err { display:block; background:rgba(224,96,96,.12); border:1px solid rgba(224,96,96,.4); color:#ffb3b3; }
+  .flash.ok { display:block; background:rgba(63,191,127,.1); border:1px solid rgba(63,191,127,.35); color:#9fe3c0; }
+  .ids { word-break:break-all; }
+</style>
+</head>
+<body>
+<header>
+  <h1>事件会话发布服务</h1>
+  <span class="sub">FastAPI + SQLite · 按事件时间会话化 · watermark 发布 · 迟到事件修订与撤回/新增差异 · 历史修订可查</span>
+</header>
+
+<main>
+  <div class="card">
+    <h2>① 用户与参数</h2>
+    <div class="row">
+      <div>
+        <label>user_id</label>
+        <input id="userId" value="demo-bridge" />
+      </div>
+      <div>
+        <label>每用户空闲间隔 idle_gap（秒）</label>
+        <input id="idleGap" type="number" min="1" value="600" />
+      </div>
+      <div style="flex:0 0 auto; align-self:flex-end;">
+        <button onclick="loadUser()">载入用户</button>
+        <button class="ghost" onclick="setGap()">设置空闲间隔</button>
+      </div>
+    </div>
+    <p class="muted mono" id="cfgLine" style="margin-top:10px;">未载入</p>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>② 分批导入事件（UTC，幂等）</h2>
+      <label>事件 JSON 数组（event_id / event_time，支持 Z 与偏移量）</label>
+      <textarea id="eventJson"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button onclick="doImport()">导入本批</button>
+        <button class="ghost small" onclick="fillBatch1()">填入首批</button>
+        <button class="ghost small" onclick="fillLateMerge()">填入迟到事件（桥接两会话）</button>
+        <button class="ghost small" onclick="fillLateInside()">填入迟到事件（落入已发布会话）</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>③ Watermark（只能前进）</h2>
+      <label>新 watermark 时间（UTC）</label>
+      <input id="wmTime" type="datetime-local" step="1" />
+      <div class="row" style="margin-top:8px;">
+        <button onclick="advanceWm()">推进 watermark 并发布</button>
+        <button class="ghost small" onclick="setWmQuick('2026-11-22T10:36')">设为 10:36</button>
+        <button class="ghost small" onclick="setWmQuick('2026-11-22T10:40')">设为 10:40</button>
+        <button class="ghost small" onclick="tryBackward()">尝试后退（应失败）</button>
+      </div>
+      <p class="muted" style="font-size:12px;margin-bottom:0;">发布条件：会话 <b>end_time &lt; watermark − idle_gap</b>，其余保持 pending。</p>
+    </div>
+  </div>
+
+  <div id="flash" class="flash"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>④ 当前会话状态（最新修订）</h2>
+      <div id="sessionsBox"><p class="muted">暂无数据</p></div>
+    </div>
+    <div class="card">
+      <h2>⑤ 已导入事件</h2>
+      <div id="eventsBox"><p class="muted">暂无数据</p></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>⑥ 修订历史（点击行查看该修订的完整会话快照与差异）</h2>
+    <div id="revisionsBox"><p class="muted">暂无修订</p></div>
+  </div>
+
+  <div class="card">
+    <h2>⑦ 一键演示：迟到合并完整流程</h2>
+    <p class="muted" style="font-size:12.5px;margin-top:0;">
+      场景 A：迟到事件落入已发布会话 → 撤回旧会话、发布修订会话；
+      场景 B：迟到事件桥接两个会话 → 撤回并回退 pending → 再推进 watermark 重新发布。
+      每一步都会调用真实 API 并记录差异。
+    </p>
+    <button onclick="runFullDemo()">▶ 运行完整演示</button>
+    <button class="ghost" onclick="document.getElementById('log').textContent=''">清空日志</button>
+    <div id="log" class="log" style="margin-top:12px;"></div>
+  </div>
+</main>
+
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <h2 id="modalTitle" style="margin-top:0;color:var(--accent);font-size:15px;"></h2>
+    <div id="modalBody"></div>
+    <button class="ghost" onclick="closeModal()">关闭</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const flash = (msg, kind='err') => { const f=$('flash'); f.className='flash '+kind; f.textContent=msg; };
+const clearFlash = () => { $('flash').className='flash'; $('flash').textContent=''; };
+const log = (msg, cls='') => { const l=$('log'); l.innerHTML += (cls?`<span class="${cls}">`:'>')+msg.replace(/&/g,'&amp;').replace(/</g,'&lt;')+(cls?'</span>':'')+'\n'; l.scrollTop=l.scrollHeight; };
+const shortTs = t => t ? t.replace('T',' ').replace(/\.\d+Z$/,' Z').replace('Z',' UTC') : '';
+const toIso = v => new Date(v.endsWith('Z')||v.includes('+') ? v : v+'Z').toISOString();
+
+async function api(path, opts={}) {
+  const res = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(data.detail || ('HTTP '+res.status));
+  return data;
+}
+
+const batch1 = [
+  {event_id:'e1', event_time:'2026-11-22T10:00:00Z'},
+  {event_id:'e2', event_time:'2026-11-22T10:08:00Z'},
+  {event_id:'e3', event_time:'2026-11-22T10:20:00Z'},
+  {event_id:'e4', event_time:'2026-11-22T10:26:00Z'}
+];
+const lateBridge = [{event_id:'L1', event_time:'2026-11-22T10:14:00Z'}];
+const lateInside = [{event_id:'L2', event_time:'2026-11-22T10:05:00Z'}];
+const fill = v => $('eventJson').value = JSON.stringify(v, null, 2);
+const fillBatch1 = () => fill(batch1);
+const fillLateMerge = () => fill(lateBridge);
+const fillLateInside = () => fill(lateInside);
+const setWmQuick = v => $('wmTime').value = v;
+
+async function loadUser() {
+  clearFlash();
+  try {
+    const cfg = await api(`/api/users/${encodeURIComponent($('userId').value)}/config`);
+    $('idleGap').value = cfg.idle_gap_seconds;
+    $('cfgLine').innerHTML = `user=<b>${cfg.user_id}</b> · idle_gap=<b>${cfg.idle_gap_seconds}s</b> · watermark=<b>${shortTs(cfg.watermark)}</b>`;
+    await refreshAll();
+  } catch (e) { flash(e.message); }
+}
+async function setGap() {
+  clearFlash();
+  try {
+    const cfg = await api(`/api/users/${encodeURIComponent($('userId').value)}/config`,
+      {method:'PUT', body:JSON.stringify({idle_gap_seconds: Number($('idleGap').value)})});
+    flash('空闲间隔已更新（下一次导入/发布按新间隔重新会话化）','ok');
+    $('cfgLine').innerHTML = `user=<b>${cfg.user_id}</b> · idle_gap=<b>${cfg.idle_gap_seconds}s</b> · watermark=<b>${shortTs(cfg.watermark)}</b>`;
+  } catch (e) { flash(e.message); }
+}
+
+async function doImport() {
+  clearFlash();
+  let events;
+  try { events = JSON.parse($('eventJson').value); } catch(e){ return flash('JSON 解析失败: '+e.message); }
+  const uid = $('userId').value;
+  try {
+    const payload = {events: events.map(e => ({user_id: uid, event_id:e.event_id, event_time:toIso(e.event_time)}))};
+    const r = await api('/api/events/import', {method:'POST', body:JSON.stringify(payload)});
+    flash(`导入完成：接收 ${r.summary.received}，新增 ${r.summary.inserted}，重复(幂等忽略) ${r.summary.duplicate}` +
+      (r.new_revision_no ? `，生成修订 #${r.new_revision_no}` : '，无新修订'), 'ok');
+    if (r.changes.length) log(`导入产生差异（修订 #${r.new_revision_no}）：\n` + r.changes.map(c =>
+      `  ${c.change_type==='retract'?'撤回':'新增'} 会话 ${c.session_key} [${c.event_ids.join(', ')}] ${shortTs(c.start_time)} ~ ${shortTs(c.end_time)}`).join('\n'), 'warn');
+    await refreshAll();
+  } catch (e) { flash(e.message); }
+}
+
+async function advanceWm() {
+  clearFlash();
+  try {
+    const r = await api('/api/watermark/advance', {method:'POST',
+      body:JSON.stringify({user_id:$('userId').value, watermark:toIso($('wmTime').value)})});
+    flash(r.new_revision_no ? `watermark 已推进，发布修订 #${r.new_revision_no}` : 'watermark 已推进，无新发布会话','ok');
+    if (r.changes.length) log(`发布差异（修订 #${r.new_revision_no}）：\n` + r.changes.map(c =>
+      `  ${c.change_type==='retract'?'撤回':'新增'} 会话 ${c.session_key} [${c.event_ids.join(', ')}]`).join('\n'), 'info');
+    await refreshAll();
+  } catch (e) { flash(e.message); }
+}
+
+async function tryBackward() {
+  clearFlash();
+  try {
+    await api('/api/watermark/advance', {method:'POST',
+      body:JSON.stringify({user_id:$('userId').value, watermark:'1970-01-01T00:00:00Z'})});
+    flash('意外：后退请求被接受了','err');
+  } catch (e) { flash('已正确拒绝 watermark 后退：' + e.message, 'ok'); }
+}
+
+async function refreshAll() {
+  const uid = encodeURIComponent($('userId').value);
+  const [cfg, sessions, events, revs] = await Promise.all([
+    api(`/api/users/${uid}/config`),
+    api(`/api/users/${uid}/sessions`),
+    api(`/api/users/${uid}/events`),
+    api(`/api/users/${uid}/revisions`)
+  ]);
+  $('cfgLine').innerHTML = `user=<b>${cfg.user_id}</b> · idle_gap=<b>${cfg.idle_gap_seconds}s</b> · watermark=<b>${shortTs(cfg.watermark)}</b>`;
+
+  $('sessionsBox').innerHTML = sessions.length ? `<table><thead><tr><th>状态</th><th>开始</th><th>结束</th><th>事件</th><th>key</th></tr></thead><tbody>
+    ${sessions.map(s=>`<tr><td><span class="badge ${s.status}">${s.status}</span></td>
+      <td class="mono">${shortTs(s.start_time)}</td><td class="mono">${shortTs(s.end_time)}</td>
+      <td class="ids">${s.event_ids.join(', ')}</td><td class="pill">${s.session_key}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">暂无会话</p>';
+
+  $('eventsBox').innerHTML = events.length ? `<table><thead><tr><th>event_id</th><th>event_time (UTC)</th></tr></thead><tbody>
+    ${events.map(e=>`<tr><td class="mono">${e.event_id}</td><td class="mono">${shortTs(e.event_time)}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">暂无事件</p>';
+
+  $('revisionsBox').innerHTML = revs.length ? `<table><thead><tr><th>#</th><th>原因</th><th>watermark</th><th>差异</th><th>说明</th></tr></thead><tbody>
+    ${revs.map(r=>`<tr class="rev-row" onclick="openRevision(${r.revision_no})">
+      <td class="mono">${r.revision_no}</td>
+      <td><span class="badge ${r.reason}">${r.reason}</span></td>
+      <td class="mono">${shortTs(r.watermark)}</td>
+      <td>${r.changes.map(c=>`<span class="badge ${c.change_type}">${c.change_type} ${c.event_ids.length}事件</span>`).join(' ') || '<span class="muted">—</span>'}</td>
+      <td class="muted">${r.detail||''}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">暂无修订</p>';
+}
+
+async function openRevision(no) {
+  const uid = encodeURIComponent($('userId').value);
+  const r = await api(`/api/users/${uid}/revisions/${no}`);
+  $('modalTitle').textContent = `修订 #${r.revision_no} · ${r.reason} · ${shortTs(r.created_at)}`;
+  $('modalBody').innerHTML = `
+    <div class="kv">
+      <div class="k">watermark</div><div class="mono">${shortTs(r.watermark)}</div>
+      <div class="k">idle_gap</div><div class="mono">${r.idle_gap_seconds} 秒</div>
+      <div class="k">说明</div><div>${r.detail||''}</div>
+    </div>
+    <h3 style="font-size:13px;color:var(--muted);">差异（撤回 / 新增）</h3>
+    ${r.changes.length ? `<table><thead><tr><th>类型</th><th>会话</th><th>时间范围</th><th>事件</th></tr></thead><tbody>
+      ${r.changes.map(c=>`<tr><td><span class="badge ${c.change_type}">${c.change_type}</span></td>
+        <td class="pill">${c.session_key}</td><td class="mono">${shortTs(c.start_time)} ~ ${shortTs(c.end_time)}</td>
+        <td class="ids">${c.event_ids.join(', ')}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">本修订无发布差异</p>'}
+    <h3 style="font-size:13px;color:var(--muted);margin-top:16px;">该修订下的完整会话快照</h3>
+    <table><thead><tr><th>状态</th><th>开始</th><th>结束</th><th>事件</th></tr></thead><tbody>
+    ${r.sessions.map(s=>`<tr><td><span class="badge ${s.status}">${s.status}</span></td>
+      <td class="mono">${shortTs(s.start_time)}</td><td class="mono">${shortTs(s.end_time)}</td>
+      <td class="ids">${s.event_ids.join(', ')}</td></tr>`).join('')}</tbody></table>`;
+  $('modalBg').style.display='flex';
+}
+const closeModal = () => $('modalBg').style.display='none';
+
+// ---------- 一键完整演示 ----------
+async function demoImport(uid, events) {
+  const r = await api('/api/events/import', {method:'POST',
+    body:JSON.stringify({events: events.map(e=>({user_id:uid, event_id:e.event_id, event_time:toIso(e.event_time)}))})});
+  log(`[${uid}] 导入 ${events.map(e=>e.event_id).join(',')}：新增 ${r.summary.inserted}，重复 ${r.summary.duplicate}` +
+    (r.new_revision_no?` → 修订 #${r.new_revision_no}`:''), 'ok');
+  r.changes.forEach(c => log(`    ${c.change_type==='retract'?'撤回':'新增'} [${c.event_ids.join(', ')}] ${shortTs(c.start_time)}~${shortTs(c.end_time)}`, c.change_type==='retract'?'err':'ok'));
+  return r;
+}
+async function demoWm(uid, wm) {
+  const r = await api('/api/watermark/advance', {method:'POST', body:JSON.stringify({user_id:uid, watermark:toIso(wm)})});
+  log(`[${uid}] watermark → ${wm}Z` + (r.new_revision_no?` → 修订 #${r.new_revision_no}`:' （无新修订）'), 'info');
+  r.changes.forEach(c => log(`    ${c.change_type==='retract'?'撤回':'新增'} [${c.event_ids.join(', ')}] ${shortTs(c.start_time)}~${shortTs(c.end_time)}`, c.change_type==='retract'?'err':'ok'));
+  log(`    当前 published=${r.published.length} pending=${r.pending.length}`);
+  return r;
+}
+
+async function runFullDemo() {
+  clearFlash();
+  const ua = 'demo-inside-' + Date.now().toString(36);
+  const ub = 'demo-bridge-' + Date.now().toString(36);
+  try {
+    log('========== 场景 A：迟到事件落入已发布会话 ==========', 'info');
+    await api(`/api/users/${ua}/config`, {method:'PUT', body:JSON.stringify({idle_gap_seconds:600})});
+    await demoImport(ua, [{event_id:'a1',event_time:'2026-11-22T10:00:00Z'},{event_id:'a2',event_time:'2026-11-22T10:08:00Z'}]);
+    await demoWm(ua, '2026-11-22T10:20'); // 阈值10:10，会话结束10:08 → 发布
+    await demoImport(ua, [{event_id:'a-late',event_time:'2026-11-22T10:05:00Z'}]); // 落入已发布会话 → 撤回+新增
+    log('场景 A 结论：旧会话被撤回，包含迟到事件的新会话作为修订重新发布，旧修订仍可查询。', 'warn');
+
+    log('\n========== 场景 B：迟到事件桥接两个会话，先撤回回退 pending 再重新发布 ==========', 'info');
+    await api(`/api/users/${ub}/config`, {method:'PUT', body:JSON.stringify({idle_gap_seconds:600})});
+    await demoImport(ub, batch1);
+    await demoWm(ub, '2026-11-22T10:36'); // 阈值10:26：A(10:00~10:08)发布，B(10:20~10:26)保留
+    await demoImport(ub, lateBridge);     // L1@10:14 桥接 → 合并为一个会话，结束10:26仍pending，撤回A
+    await demoWm(ub, '2026-11-22T10:40'); // 阈值10:30，合并会话发布
+    log('场景 B 结论：桥接事件合并两会话；已发布的 A 被撤回并随合并会话回到 pending，watermark 再前进后重新发布。', 'warn');
+
+    log('\n========== 幂等验证：重复导入不产生新修订 ==========', 'info');
+    const before = (await api(`/api/users/${ub}/revisions`)).length;
+    const r = await demoImport(ub, batch1);
+    const after = (await api(`/api/users/${ub}/revisions`)).length;
+    log(`重复导入结果：新增 ${r.summary.inserted}，新修订=${r.new_revision_no}，修订总数 ${before} → ${after}（应保持不变）`,
+      (r.summary.inserted===0 && before===after)?'ok':'err');
+
+    $('userId').value = ub;
+    await loadUser();
+    flash('完整演示执行完毕，请查看修订历史（可点击）与日志','ok');
+  } catch (e) {
+    log('演示失败: ' + e.message, 'err'); flash(e.message);
+  }
+}
+
+// 初始化
+fill(batch1);
+$('wmTime').value = '2026-11-22T10:36';
+loadUser();
+</script>
+</body>
+</html>
